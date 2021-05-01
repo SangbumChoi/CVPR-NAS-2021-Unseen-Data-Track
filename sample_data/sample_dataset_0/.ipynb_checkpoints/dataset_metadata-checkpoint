@@ -1,0 +1,1 @@
+{"batch_size": 64, "n_classes": 20, "lr": 0.01, "benchmark": 92.08, "name": "sample_dataset_0"}
