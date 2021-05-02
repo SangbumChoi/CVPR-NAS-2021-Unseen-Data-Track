@@ -42,7 +42,7 @@ class NAS:
         self.learning_rate = 0.025
         self.momentum = 0.9
         self.weight_decay = 3e-4
-        self.epochs = 4
+        self.epochs = 16
         self.init_channels = 8
         self.layers = 4
         self.drop_path_prob = 0.2
@@ -108,10 +108,20 @@ class NAS:
         model = Network(self.init_channels, data_channel, n_classes, self.layers, criterion)
         model = model.cuda()
 
-        logging.info("param size = %fMB", utils.count_parameters_in_MB(model))
+        # since submission server does not deal with multi-gpu
+        if is_multi_gpu:
+            print("Let's use", torch.cuda.device_count(), "GPUs!")
+            # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
+            model = nn.DataParallel(model)
+
+        arch_parameters = model.module.arch_parameters() if is_multi_gpu else model.arch_parameters()
+        arch_params = list(map(id, arch_parameters))
+
+        parameters = model.module.parameters() if is_multi_gpu else model.parameters()
+        weight_params = filter(lambda p: id(p) not in arch_params, parameters)
 
         optimizer = torch.optim.SGD(
-            model.parameters(),
+            weight_params,
             self.learning_rate,
             momentum=self.momentum,
             weight_decay=self.weight_decay)
@@ -119,7 +129,7 @@ class NAS:
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, float(self.epochs), eta_min=self.learning_rate_min)
 
-        architect = Architect(model, criterion, self.momentum, self.weight_decay, self.arch_learning_rate, self.arch_weight_decay)
+        architect = Architect(is_multi_gpu, model, criterion, self.momentum, self.weight_decay, self.arch_learning_rate, self.arch_weight_decay)
 
         best_accuracy = 0
         best_accuracy_different_cnn_counts = dict()
@@ -181,7 +191,7 @@ class NAS:
 
                 if step % self.report_freq == 0:
                     average_batch_t = (time.time() - train_batch) / (step + 1)
-                    print(" Step: {}, Top1: {}, Top5: {}, T: {}".format(step, top1.avg, top5.avg, show_time(average_batch_t * (len(train_loader) - step))))
+                    print("Epoch: {}, Step: {}, Top1: {}, Top5: {}, T: {}".format(epoch, step, top1.avg, top5.avg, show_time(average_batch_t * (len(train_loader) - step))))
 
             model.eval()
             
@@ -205,15 +215,15 @@ class NAS:
                         top5.update(prec5.item(), n)
 
                         if step % self.report_freq == 0:
-                            print(" Step: {}, Top1: {}, Top5: {}".format(step, top1.avg, top5.avg))
+                            print("Epoch: {}, Step: {}, Top1: {}, Top5: {}".format(epoch, step, top1.avg, top5.avg))
                                   
             scheduler.step()
 
             # save the structure
             genotype, normal_cnn_count, reduce_cnn_count = model.module.genotype() if is_multi_gpu else model.genotype()
             print("(n:%d,r:%d)" % (normal_cnn_count, reduce_cnn_count))
-            print(F.softmax(model.module.alphas_normal if is_multi_gpu else model.alphas_normal, dim=-1))
-            print(F.softmax(model.module.alphas_reduce if is_multi_gpu else model.alphas_reduce, dim=-1))
-            logging.info('genotype = %s', genotype)
+            # print(F.softmax(model.module.alphas_normal if is_multi_gpu else model.alphas_normal, dim=-1))
+            # print(F.softmax(model.module.alphas_reduce if is_multi_gpu else model.alphas_reduce, dim=-1))
+            # logging.info('genotype = %s', genotype)
         
         return model

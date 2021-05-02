@@ -12,10 +12,10 @@ def _concat(xs):
 
 class Architect(object):
 
-    def __init__(self, model, criterion, momentum, weight_decay, arch_learning_rate, arch_weight_decay):
+    def __init__(self, is_multi_gpu,  model, criterion, momentum, weight_decay, arch_learning_rate, arch_weight_decay):
 #         gpus = [int(i) for i in args.gpu.split(',')]
 #         self.is_multi_gpu = True if len(gpus) > 1 else False
-        self.is_multi_gpu = False
+        self.is_multi_gpu = is_multi_gpu
 
         self.network_momentum = momentum
         self.network_weight_decay = weight_decay
@@ -203,9 +203,9 @@ class Architect(object):
                 v.grad.data.copy_(g.data)
 
     def _construct_model_from_theta(self, theta):
-        model_new = self.model.new()
+        model_new = self.model.module.new() if self.is_multi_gpu else self.model.new()
         model_dict = self.model.state_dict()
-
+        
         params, offset = {}, 0
         named_parameters = self.model.module.named_parameters() if self.is_multi_gpu else self.model.named_parameters()
         for k, v in named_parameters:
@@ -222,7 +222,7 @@ class Architect(object):
                 logging.info("multi-gpu")
                 logging.info("k = %s, v = %s" % (k, v))
                 if 'module' not in k:
-                    k = 'module.' + k
+                    k = 'module' + k
                 else:
                     k = k.replace('features.module.', 'module.features.')
                 new_state_dict[k] = v
