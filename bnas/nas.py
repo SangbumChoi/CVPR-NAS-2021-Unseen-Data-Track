@@ -35,7 +35,7 @@ class NAS:
     def __init__(self):
         self.seed = 2
         self.gpu = 0
-        self.arch = 'latest_cell'
+        self.arch = 'latest_cell_zeroise'
         self.batch_size = 256
         self.learning_rate = 0.025
         self.momentum = 0.9
@@ -97,7 +97,7 @@ class NAS:
 
         data_channel = np.array(train_x).shape[1]
         if data_channel == 3:
-            self.arch = 'DARTS'
+            # self.arch = 'DARTS'
             self.image = True
 
         genotype = eval("genotypes.%s" % self.arch)

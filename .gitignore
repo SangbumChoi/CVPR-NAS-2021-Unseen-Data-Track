@@ -130,6 +130,7 @@ dmypy.json
 
 # train data
 train_data/
+sample_output/
 
 # nohup
-nohup.out
+*.out

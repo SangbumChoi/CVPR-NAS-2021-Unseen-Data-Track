@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import numpy as np
+from datetime import datetime
 
 
 if __name__ == '__main__':
@@ -57,8 +58,13 @@ if __name__ == '__main__':
     out.append("Overall_Score: {:.3f}".format(overall_score))
 
     # save score for leaderboard consideration
+    # datetime object containing current date and time
+    now = datetime.now()
+    # dd/mm/YY H:M:S
+    dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
+
     print(out)
-    with open(os.path.join(output_dir, "scores.txt"), "w") as f:
+    with open(os.path.join(output_dir, "{}.txt".format(dt_string)), "w") as f:
         f.write("\n".join(out))
 
 

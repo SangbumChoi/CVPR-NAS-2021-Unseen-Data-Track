@@ -4,7 +4,7 @@ endif
 
 ingest:
 	rm -f sample_output/*
-	python3 ingestion_program/ingestion.py _ $(data) sample_output _ _ milenas
+	python3 ingestion_program/ingestion.py _ $(data) sample_output _ _ bnas
 
 score:
 	rm -Rf scoring_tmp
