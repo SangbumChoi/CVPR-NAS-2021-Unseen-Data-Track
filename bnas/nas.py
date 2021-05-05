@@ -34,8 +34,8 @@ with this class. To submit, zip this file and any helpers files together with th
 class NAS:
     def __init__(self):
         self.seed = 2
-        self.gpu = 0
-        self.arch = 'latest_cell_zeroise'
+        self.gpu = 1
+        self.arch = 'latest_cell'
         self.batch_size = 256
         self.learning_rate = 0.025
         self.momentum = 0.9
