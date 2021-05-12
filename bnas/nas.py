@@ -35,14 +35,14 @@ class NAS:
     def __init__(self):
         self.seed = 2
         self.gpu = 1
-        self.arch = 'latest_cell'
+        self.arch = 'latest_cell_skip'
         self.batch_size = 256
         self.learning_rate = 0.025
         self.momentum = 0.9
         self.weight_decay = 3e-4
-        self.epochs = 32
-        self.init_channels = 4
-        self.layers = 8
+        self.epochs = 64
+        self.init_channels = 32
+        self.layers = 16
         self.drop_path_prob = 0.2
         self.unrolled = False
         self.grad_clip = 5
@@ -54,6 +54,16 @@ class NAS:
         self.label_smooth = 0.1
         self.image = False
 
+        print('arch:{}\nbatch_size:{}\nlearning_rate:{}\nmomentum:{}\nweight_deacy:{}\nepochs:{}\ninit_channels:{}\nlayers:{}\ndrop_path_prob:{}\nunrolled:{}'.format(self.arch, 
+            self.batch_size,
+            self.learning_rate,
+            self.momentum,
+            self.weight_decay,
+            self.epochs,
+            self.init_channels,
+            self.layers,
+            self.drop_path_prob,
+            self.unrolled))
     """
 	search() Inputs:
 		train_x: numpy array of shape (n_datapoints, channels, weight, height)
@@ -96,12 +106,9 @@ class NAS:
         cudnn.enabled = True
 
         data_channel = np.array(train_x).shape[1]
-        if data_channel == 3:
-            # self.arch = 'DARTS'
-            self.image = True
 
         genotype = eval("genotypes.%s" % self.arch)
-        model = ImageNetwork(self.init_channels ,n_classes, self.layers, genotype) if self.image else Network(self.init_channels, data_channel ,n_classes, self.layers, genotype)
+        model = Network(self.init_channels, data_channel ,n_classes, self.layers, genotype)
         model.cuda()
         
         # loading criterion and optimizer
@@ -109,9 +116,7 @@ class NAS:
 
         criterion = nn.CrossEntropyLoss()
         criterion = criterion.cuda()
-        if self.image:
-            criterion_smooth = CrossEntropyLabelSmooth(n_classes, self.label_smooth)
-            criterion_smooth = criterion_smooth.cuda()
+
         optimizer = torch.optim.SGD(
             model.parameters(),
             self.learning_rate,

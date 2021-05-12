@@ -104,3 +104,9 @@ latest_cell = Genotype(
             ('bin_dil_conv_3x3', 1), ('bin_dil_conv_3x3', 1), ('bin_conv_3x3', 0)], normal_concat=range(2, 6),
     reduce=[('max_pool_3x3', 0), ('max_pool_3x3', 1), ('max_pool_3x3', 0), ('bin_conv_3x3', 2), ('max_pool_3x3', 0),
             ('bin_dil_conv_3x3', 3), ('max_pool_3x3', 0), ('bin_dil_conv_3x3', 4)], reduce_concat=range(2, 6))
+
+latest_cell_skip = Genotype(
+    normal=[('none', 1), ('bin_dil_conv_3x3', 0), ('bin_conv_3x3', 1), ('skip_connect', 0), ('none', 2), ('none', 2), ('none', 3),
+            ('none', 3), ('none', 4)], normal_concat=range(2, 6),
+    reduce=[('max_pool_3x3', 0), ('none', 1), ('max_pool_3x3', 0), ('skip_connect', 2), ('none', 2), ('none', 3), ('none', 2), ('none', 3),
+            ('none', 4)], reduce_concat=range(2, 6))
