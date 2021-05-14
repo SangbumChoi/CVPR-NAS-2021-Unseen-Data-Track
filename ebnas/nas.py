@@ -16,7 +16,7 @@ import bin_utils
 
 from torch.autograd import Variable
 from model import Network
-from _model import ImageNetwork, CrossEntropyLabelSmooth
+from _model import EffNetV2
 from helpers import *
 
 """
@@ -35,15 +35,15 @@ class NAS:
     def __init__(self):
         self.seed = 2
         self.gpu = 1
-        self.arch = 'latest_cell_skip2'
-        self.batch_size = 64
+        self.arch = 'latest_cell_skip3'
+        self.batch_size = 256
         self.learning_rate = 0.025
         self.momentum = 0.9
         self.weight_decay = 3e-4
-        self.epochs = 64
-        self.init_channels = 64
+        self.epochs = 96
+        self.init_channels = 32
         self.layers = 16
-        self.drop_path_prob = 0.1
+        self.drop_path_prob = 0.2
         self.unrolled = False
         self.grad_clip = 5
         self.learning_rate_min = 0.001
@@ -108,6 +108,11 @@ class NAS:
         data_channel = np.array(train_x).shape[1]
 
         genotype = eval("genotypes.%s" % self.arch)
+        if data_channel==3:
+            print("=== SEARCH STAGE DATA_CHANNEL {} ===".format(data_channel))
+            model = EffNetV2(n_classes, 1.5)
+            model.cuda()
+            return model
         model = Network(self.init_channels, data_channel ,n_classes, self.layers, genotype)
         model.cuda()
         
