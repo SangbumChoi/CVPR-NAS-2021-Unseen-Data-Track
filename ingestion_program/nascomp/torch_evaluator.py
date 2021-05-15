@@ -205,7 +205,7 @@ def full_training(model, **kwargs):
         if valid_acc > best_val_acc:
             best_val_acc = valid_acc
             best_test = test_predictions
-            best_epoch = 0
+            best_epoch = epoch
         scheduler.step()
 
         average_epoch_t = (time.time() - train_start) / (epoch + 1)

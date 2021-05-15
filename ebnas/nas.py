@@ -4,6 +4,7 @@ import sys
 import time
 import glob
 import numpy as np
+import torchvision
 import torch
 import utils
 import logging
@@ -34,10 +35,10 @@ with this class. To submit, zip this file and any helpers files together with th
 class NAS:
     def __init__(self):
         self.seed = 2
-        self.gpu = 1
+        self.gpu = 0
         self.arch = 'latest_cell_skip3'
         self.batch_size = 256
-        self.learning_rate = 0.025
+        self.learning_rate = 0.01
         self.momentum = 0.9
         self.weight_decay = 3e-4
         self.epochs = 96
@@ -110,8 +111,13 @@ class NAS:
         genotype = eval("genotypes.%s" % self.arch)
         if data_channel==3:
             print("=== SEARCH STAGE DATA_CHANNEL {} ===".format(data_channel))
-            model = EffNetV2(n_classes, 1.5)
-            model.cuda()
+
+            # load resnet18 model
+            model = torchvision.models.resnext101_32x8d()
+
+            # reshape it to this dataset
+            model.conv1 = nn.Conv2d(train_x.shape[1], 64, kernel_size=(7, 7), stride=1, padding=3)
+            model.fc = nn.Linear(model.fc.in_features, n_classes, bias=True)
             return model
         model = Network(self.init_channels, data_channel ,n_classes, self.layers, genotype)
         model.cuda()
@@ -122,13 +128,16 @@ class NAS:
         criterion = nn.CrossEntropyLoss()
         criterion = criterion.cuda()
 
-        optimizer = torch.optim.SGD(
-            model.parameters(),
-            self.learning_rate,
-            momentum=self.momentum,
-            weight_decay=self.weight_decay
-        )
-        
+        # optimizer = torch.optim.SGD(
+        #     model.parameters(),
+        #     self.learning_rate,
+        #     momentum=self.momentum,
+        #     weight_decay=self.weight_decay
+        # )
+       
+        optimizer = torch.optim.Adam(model.parameters(), self.learning_rate, weight_decay=self.weight_decay)
+
+
         train_pack = list(zip(train_x, train_y))
         valid_pack = list(zip(valid_x, valid_y))
 
