@@ -6,10 +6,7 @@ PRIMITIVES = [
     'none',
     'max_pool_3x3',
     'avg_pool_3x3',
-    'bin_dil_conv_3x3',
-    'bin_dil_conv_5x5',
-    'bin_conv_3x3',
-    'bin_conv_5x5'
+    'skip_connect',
 ]
 
 PRIMITIVES_reduce = [
@@ -18,8 +15,7 @@ PRIMITIVES_reduce = [
     'avg_pool_3x3',
     'bin_dil_conv_3x3',
     'bin_dil_conv_5x5',
-    'bin_conv_3x3',
-    'bin_conv_5x5'
+    'skip_connect',
 ]
 
 NASNet = Genotype(
@@ -124,7 +120,7 @@ latest_cell_skip3 = Genotype(
             ('none', 4)], reduce_concat=range(2, 6))
 
 latest_cell_skip4 = Genotype(
-    normal=[('sep_conv_3x3', 1), ('bin_dil_conv_3x3', 0), ('bin_conv_3x3', 1), ('skip_connect', 0), ('skip_connect', 0), ('none', 2), ('none', 2), ('dil_conv_3x3', 2), ('none', 3),
+    normal=[('sep_conv_3x3', 1), ('bin_dil_conv_3x3', 0), ('bin_conv_3x3', 1), ('skip_connect', 0), ('skip_connect', 0), ('none', 2), ('none', 2), ('none', 3),
             ('none', 3), ('none', 4)], normal_concat=range(2, 6),
     reduce=[('max_pool_3x3', 0), ('none', 1), ('max_pool_3x3', 0), ('skip_connect', 2), ('skip_connect', 2), ('bin_conv_3x3', 2), ('bin_dil_conv_3x3', 3), ('none', 2), ('none', 3),
             ('none', 4)], reduce_concat=range(2, 6))

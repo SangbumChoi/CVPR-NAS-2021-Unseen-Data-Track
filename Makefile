@@ -8,7 +8,7 @@ endif
 
 ingest:
 	rm -f $(sample_output)/*
-	python3 ingestion_program/ingestion.py _ $(data) $(sample_output) _ _ ebnas
+	python3 ingestion_program/ingestion.py _ $(data) $(sample_output) _ _ real_bnas
 
 score:
 	rm -Rf scoring_tmp

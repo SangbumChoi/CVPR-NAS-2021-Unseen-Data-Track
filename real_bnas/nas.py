@@ -1,23 +1,18 @@
-import os
-import gc
 import sys
 import time
-import glob
 import numpy as np
 import torchvision
 import torch
 import utils
 import logging
-import argparse
 import torch.nn as nn
 import genotypes
 import torch.utils
 import torch.backends.cudnn as cudnn
-import bin_utils
+import bin_utils_search
 
-from torch.autograd import Variable
 from model import Network
-from _model import EffNetV2
+from architect import Architect
 from helpers import *
 
 """
@@ -36,27 +31,28 @@ class NAS:
     def __init__(self):
         self.seed = 2
         self.gpu = 1
-        self.arch = 'latest_cell_skip4'
         self.batch_size = 256
         self.learning_rate = 0.01
         self.momentum = 0.9
         self.weight_decay = 3e-4
-        self.epochs = 96
-        self.init_channels = 32
-        self.layers = 16
+        self.epochs = 3
+        self.init_channels = 16
+        self.layers = 8
         self.drop_path_prob = 0.2
         self.unrolled = False
         self.grad_clip = 5
         self.learning_rate_min = 0.001
-        self.report_freq = 20
         self.arch_learning_rate = 3e-4
         self.arch_weight_decay = 1e-3
         self.num_skip = 3
         self.label_smooth = 0.1
         self.image = False
+        self.lamda = 1.0
+        self.tau = 7.7
+        self.gamma = 3
+        self.geno_name = 'EXP'
 
-        print('arch:{}\nbatch_size:{}\nlearning_rate:{}\nmomentum:{}\nweight_deacy:{}\nepochs:{}\ninit_channels:{}\nlayers:{}\ndrop_path_prob:{}\nunrolled:{}'.format(self.arch, 
-            self.batch_size,
+        print('batch_size:{}\nlearning_rate:{}\nmomentum:{}\nweight_deacy:{}\nepochs:{}\ninit_channels:{}\nlayers:{}\ndrop_path_prob:{}\nunrolled:{}'.format(self.batch_size,
             self.learning_rate,
             self.momentum,
             self.weight_decay,
@@ -93,8 +89,7 @@ class NAS:
         torch.manual_seed(self.seed)
         cudnn.enabled=True
         torch.cuda.manual_seed(self.seed)
-        is_multi_gpu = False
-        
+
         helper_function()
         n_classes = metadata['n_classes']
         
@@ -108,52 +103,34 @@ class NAS:
 
         data_channel = np.array(train_x).shape[1]
 
-        genotype = eval("genotypes.%s" % self.arch)
-        if data_channel==3:
-            print("=== SEARCH STAGE DATA_CHANNEL {} ===".format(data_channel))
+        criterion = nn.CrossEntropyLoss()
+        criterion = criterion.cuda()
 
-            # load resnet18 model
-            model = torchvision.models.resnext101_32x8d()
-
-            # reshape it to this dataset
-            model.conv1 = nn.Conv2d(train_x.shape[1], 64, kernel_size=(7, 7), stride=1, padding=3)
-            model.fc = nn.Linear(model.fc.in_features, n_classes, bias=True)
-            return model
-        model = Network(self.init_channels, data_channel ,n_classes, self.layers, genotype)
-        model.cuda()
-
-        model.drop_path_prob = self.drop_path_prob
-        return model
-        
-        # loading criterion and optimizer
-        bin_op = bin_utils.BinOp(model, self)
+        model = Network(self.init_channels, data_channel, n_classes, self.layers, criterion)
+        model = model.cuda()
 
         criterion = nn.CrossEntropyLoss()
         criterion = criterion.cuda()
 
-        # optimizer = torch.optim.SGD(
-        #     model.parameters(),
-        #     self.learning_rate,
-        #     momentum=self.momentum,
-        #     weight_decay=self.weight_decay
-        # )
-       
-        optimizer = torch.optim.Adam(model.parameters(), self.learning_rate, momentum=self.momentum, weight_decay=self.weight_decay)
+        optimizer = torch.optim.SGD(
+            model.parameters(),
+            self.learning_rate,
+            momentum=self.momentum,
+            weight_decay=self.weight_decay
+        )
 
+        architect = Architect(model, self)
+        bin_op = bin_utils_search.BinOp(model, self)
+        best_genotypes = []
 
         train_pack = list(zip(train_x, train_y))
         valid_pack = list(zip(valid_x, valid_y))
 
-        train_loader = torch.utils.data.DataLoader(train_pack, int(self.batch_size), pin_memory=True, num_workers=4)
-        valid_loader = torch.utils.data.DataLoader(valid_pack, int(self.batch_size), pin_memory=True, num_workers=4)
+        train_loader = torch.utils.data.DataLoader(train_pack, int(self.batch_size), pin_memory=True)
+        valid_loader = torch.utils.data.DataLoader(valid_pack, int(self.batch_size), pin_memory=True)
 
-        # since submission server does not deal with multi-gpu
-        if is_multi_gpu:
-            print("Let's use", torch.cuda.device_count(), "GPUs!")
-            # dim = 0 [30, xxx] -> [10, ...], [10, ...], [10, ...] on 3 GPUs
-            model = nn.DataParallel(model)
-
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, 50, eta_min = 0.0) if self.image else utils.OneCycleLR(optimizer, self.epochs * len(train_loader), lr_range=(0.05 * self.learning_rate, self.learning_rate))
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, float(self.epochs), eta_min=self.learning_rate_min)
 
         best_accuracy = 0
         best_epoch = 0
@@ -162,10 +139,18 @@ class NAS:
         for epoch in range(self.epochs):
             print("=== SEARCH STAGE EPOCH {} ===".format(epoch))
 
+            scheduler.step()
+            # lr = scheduler.get_lr()[0]
+            lr = scheduler.get_last_lr()
+
+            genotype = model.genotype()
+            genotype_img = model.genotype(self.gamma)
+            print('genotype = %s', genotype)
+
             model.drop_path_prob = self.drop_path_prob * epoch / self.epochs
 
-            train_acc, train_obj = _train(train_loader, model, criterion, optimizer, bin_op, scheduler, epoch, self.grad_clip, self.report_freq) if self.image else train(train_loader, model, criterion, optimizer, bin_op, scheduler, self.report_freq)
-            valid_acc, valid_obj = infer(valid_loader, model, criterion, bin_op, self.report_freq)
+            train_acc, train_obj = train(train_loader, valid_loader, model, architect, criterion, optimizer, lr, bin_op, epoch)
+            valid_acc, valid_obj = infer(valid_loader, model, criterion, bin_op)
 
             average_epoch_t = (time.time() - train_epoch) / (epoch + 1)
 
@@ -173,6 +158,12 @@ class NAS:
                 best_accuracy = valid_acc
                 best_epoch = epoch
                 saved_model = model
+                if len(best_genotypes) > 0:
+                    best_genotypes[0] = genotype
+                    best_genotypes[1] = genotype_img
+                else:
+                    best_genotypes.append(genotype)
+                    best_genotypes.append(genotype_img)
 
             prog_str = "  Train Acc:  {:>8.3f}%, Val Acc: {:>8.3f}%, Mem Alloc: {}, T Remaining Est: {}".format(
                 train_acc,
@@ -184,80 +175,48 @@ class NAS:
                 best_epoch)
             print(prog_str)
 
+        with open('./genotypes.py', 'a') as f:
+            f.write(self.geno_name + ' = ' + str(best_genotypes[0]) + '\n')
+            f.write(self.geno_name + '_img' + ' = ' + str(best_genotypes[1]) + '\n')
+
         return saved_model
 
-def train(train_queue, model, criterion, optimizer, bin_op, scheduler, report_freq):
+def train(train_queue, valid_queue, model, architect, criterion, optimizer, lr, bin_op, epoch):
     objs = utils.AvgrageMeter()
     top1 = utils.AvgrageMeter()
     top5 = utils.AvgrageMeter()
     model.train()
-
     for step, (input, target) in enumerate(train_queue):
         bin_op.binarization()
-        input = input.cuda()
-        target = target.cuda()
 
-        optimizer.zero_grad()
-        logits = model(input)
-        loss = criterion(logits, target)
-        loss.backward()
-        bin_op.restore()
-        bin_op.updateBinaryGradWeight()
-        optimizer.step()
-        scheduler.step()
-        prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
         n = input.size(0)
-        objs.update(loss.item(), n)
-        top1.update(prec1.item(), n)
-        top5.update(prec5.item(), n)
 
-        # if step % report_freq == 0:
-        #     print("Step: {}, Top1: {}, Top5: {}".format(step, top1.avg, top5.avg))
+        input =input.cuda()
+        target =target.cuda()
 
-    return top1.avg, objs.avg
+        input_search, target_search = next(iter(valid_queue))
+        input_search = input_search.cuda()
+        target_search = target_search.cuda()
 
-def _train(train_queue, model, criterion, optimizer, bin_op, scheduler, epoch, grad_clip, report_freq):
-    objs = utils.AvgrageMeter()
-    top1 = utils.AvgrageMeter()
-    top5 = utils.AvgrageMeter()
-    model.train()
-    iters = len(train_queue)
-    for step, (input, target) in enumerate(train_queue):
-
-        bin_op.binarization()
-        target = target.cuda()
-        input = input.cuda()
-        scheduler.step(epoch + step/iters)
+        architect.step(input, target, input_search, target_search, lr, optimizer,epoch)
 
         optimizer.zero_grad()
         logits = model(input)
         loss = criterion(logits, target)
 
-        # with amp.scale_loss(loss, optimizer) as scaled_loss:
-        #     scaled_loss.backward()
         loss.backward()
-        nn.utils.clip_grad_norm(model.parameters(), grad_clip)
         bin_op.restore()
         bin_op.updateBinaryGradWeight()
         optimizer.step()
 
         prec1, prec5 = utils.accuracy(logits, target, topk=(1, 5))
-        n = input.size(0)
-        # reduced_loss = loss.data
         objs.update(loss.item(), n)
         top1.update(prec1.item(), n)
         top5.update(prec5.item(), n)
-        # objs.update(to_python_float(reduced_loss), n)
-        # top1.update(to_python_float(prec1), n)
-        # top5.update(to_python_float(prec5), n)
-        # if step % report_freq == 0:
-        #     print("Step: {}, Top1: {}, Top5: {}".format(step, top1.avg, top5.avg))
-        del loss, logits, input, target, prec1, prec5
-        gc.collect()
-        torch.cuda.empty_cache()
+
     return top1.avg, objs.avg
 
-def infer(valid_queue, model, criterion, bin_op, report_freq):
+def infer(valid_queue, model, criterion, bin_op):
     objs = utils.AvgrageMeter()
     top1 = utils.AvgrageMeter()
     top5 = utils.AvgrageMeter()
@@ -277,7 +236,5 @@ def infer(valid_queue, model, criterion, bin_op, report_freq):
             top1.update(prec1.item(), n)
             top5.update(prec5.item(), n)
 
-            # if step % report_freq == 0:
-            #     print("Step: {}, Top1: {}, Top5: {}".format(step, top1.avg, top5.avg))
     bin_op.restore()
     return top1.avg, objs.avg

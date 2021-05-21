@@ -31,6 +31,12 @@ if __name__ == '__main__':
     for dataset_path in get_dataset_paths(input_dir):
         (train_x, train_y), (valid_x, valid_y), test_x, metadata = load_datasets(dataset_path)
 
+        # train_x = train_x[:,:,:27,:18]
+        # valid_x = valid_x[:,:,:27,:18]
+        # test_x = test_x[:,:,:27,:18]
+
+        print(train_x.shape, valid_x.shape, test_x.shape)
+
         # initialize user algorithm
         nas_algorithm = nas.NAS()
 
