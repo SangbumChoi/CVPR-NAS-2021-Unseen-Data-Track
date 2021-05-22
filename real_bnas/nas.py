@@ -31,13 +31,13 @@ class NAS:
     def __init__(self):
         self.seed = 2
         self.gpu = 1
-        self.batch_size = 256
+        self.batch_size = 64
         self.learning_rate = 0.01
         self.momentum = 0.9
         self.weight_decay = 3e-4
-        self.epochs = 3
-        self.init_channels = 16
-        self.layers = 8
+        self.epochs = 20
+        self.init_channels = 32
+        self.layers = 4
         self.drop_path_prob = 0.2
         self.unrolled = False
         self.grad_clip = 5
@@ -52,15 +52,7 @@ class NAS:
         self.gamma = 3
         self.geno_name = 'EXP'
 
-        print('batch_size:{}\nlearning_rate:{}\nmomentum:{}\nweight_deacy:{}\nepochs:{}\ninit_channels:{}\nlayers:{}\ndrop_path_prob:{}\nunrolled:{}'.format(self.batch_size,
-            self.learning_rate,
-            self.momentum,
-            self.weight_decay,
-            self.epochs,
-            self.init_channels,
-            self.layers,
-            self.drop_path_prob,
-            self.unrolled))
+        print('self : {}'.format(self))
     """
 	search() Inputs:
 		train_x: numpy array of shape (n_datapoints, channels, weight, height)
@@ -84,7 +76,7 @@ class NAS:
     def search(self, train_x, train_y, valid_x, valid_y, metadata):
         
         np.random.seed(self.seed)
-        torch.cuda.set_device(self.gpu)
+        # torch.cuda.set_device(self.gpu)
         cudnn.benchmark = True
         torch.manual_seed(self.seed)
         cudnn.enabled=True

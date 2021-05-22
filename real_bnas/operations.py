@@ -75,24 +75,21 @@ class ReLUConvBN(nn.Module):
         x = self.bn(x)
         return self.op(x)
 
-
 class BinDilConv(nn.Module):
 
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True):
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True, activation=nn.ReLU(inplace=False)):
         super(BinDilConv, self).__init__()
         self.bn = nn.BatchNorm2d(C_in, affine=affine)
         self.op = nn.Sequential(
             nn.Conv2d(C_in, C_out, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
                       bias=False),
-
-            nn.ReLU(inplace=False),
+            activation,
         )
 
     def forward(self, x):
         x = self.bn(x)
         x, _ = BinActive.apply(x)
         return self.op(x)
-
 
 class Identity(nn.Module):
 
@@ -101,7 +98,6 @@ class Identity(nn.Module):
 
     def forward(self, x):
         return x
-
 
 class Zero(nn.Module):
 
@@ -132,10 +128,10 @@ class FactorizedReduce(nn.Module):
 
 class DilConv(nn.Module):
 
-    def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True):
+    def __init__(self, C_in, C_out, kernel_size, stride, padding, dilation, affine=True, activation=nn.ReLU(inplace=False)):
         super(DilConv, self).__init__()
         self.op = nn.Sequential(
-            nn.ReLU(inplace=False),
+            activation,
             nn.Conv2d(C_in, C_in, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation,
                       groups=C_in, bias=False),
             nn.Conv2d(C_in, C_out, kernel_size=1, padding=0, bias=False),
