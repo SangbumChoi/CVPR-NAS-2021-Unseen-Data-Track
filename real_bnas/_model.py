@@ -1,165 +1,155 @@
 import torch
 import torch.nn as nn
-import math
+from operations import *
+from torch.autograd import Variable
+from utils import drop_path
 
-__all__ = ['effnetv2_s']
+class ImageCell(nn.Module):
+
+    def __init__(self, genotype, layer_no, C_prev_prev, C_prev, C, reduction, reduction_prev):
+        super(ImageCell, self).__init__()
+        print(C_prev_prev, C_prev, C)
+        self.reduction = reduction
+        self.layer = layer_no
+        self.reduction = reduction
+        self.reduction_prev = reduction_prev
+
+        if reduction_prev:
+            if self.reduction:
+                self.preprocess0_red = BinReLUConvBN(C_prev_prev, C, 3, 2, 1)
+            else:
+                self.preprocess0 = BinReLUConvBN(C_prev_prev, C, 3, 2, 1)
+        else:
+            if self.reduction:
+                self.preprocess0_red = BinReLUConvBN(C_prev_prev, C, 1, 1, 0)
+            else:
+                self.preprocess0 = BinReLUConvBN(C_prev_prev, C, 1, 1, 0)
+        if self.reduction:
+            self.preprocess1_red = BinReLUConvBN(C_prev, C, 1, 1, 0)
+        else:
+            self.preprocess1 = BinReLUConvBN(C_prev, C, 1, 1, 0)
+        if self.reduction:
+            self.preprocess_res = nn.Sequential(nn.BatchNorm2d(C_prev, affine=True),
+                                                nn.Conv2d(C_prev, 4 * C, kernel_size=2, stride=2))
+            self.preprocess_res_xpad = nn.Sequential(nn.BatchNorm2d(C_prev, affine=True),
+                                                nn.Conv2d(C_prev, 4 * C, kernel_size=2, stride=2, padding=(1, 0)))
+            self.preprocess_res_ypad = nn.Sequential(nn.BatchNorm2d(C_prev, affine=True),
+                                    nn.Conv2d(C_prev, 4 * C, kernel_size=2, stride=2, padding=(0, 1)))
+        if reduction:
+            op_names, indices = zip(*genotype.reduce)
+            concat = genotype.reduce_concat
+        else:
+            op_names, indices = zip(*genotype.normal)
+            concat = genotype.normal_concat
+        self._compile(C, op_names, indices, concat, reduction)
+        self.dropout = nn.Dropout(0.2)
+
+    def _compile(self, C, op_names, indices, concat, reduction):
+        assert len(op_names) == len(indices)
+        self._steps = len(op_names) // 2
+        self._concat = concat
+        self.multiplier = len(concat)
+
+        self._ops = nn.ModuleList()
+        for name, index in zip(op_names, indices):
+            stride = 2 if reduction and index < 2 else 1
+            op = OPS[name](C, stride, True)
+            self._ops += [op]
+        self._indices = indices
+
+    def forward(self, s0, s1, drop_prob):
+        res0 = s0
+        res1 = s1
+        if self.reduction:
+            s0 = self.preprocess0_red(res0)
+            s1 = self.preprocess1_red(res1)
+        else:
+            s0 = self.preprocess0(s0)
+            s1 = self.preprocess1(s1)
+
+        states = [s0, s1]
+        for i in range(self._steps):
+            h1 = states[self._indices[2 * i]]
+            h2 = states[self._indices[2 * i + 1]]
+            op1 = self._ops[2 * i]
+            op2 = self._ops[2 * i + 1]
+            h1 = op1(h1)
+            h2 = op2(h2)
+            if self.training and drop_prob > 0.:
+                if not isinstance(op1, Identity):
+                    h1 = drop_path(h1, drop_prob)
+                if not isinstance(op2, Identity):
+                    h2 = drop_path(h2, drop_prob)
+            s = h1 + h2
+            states += [s]
+
+        if self.layer == 0:
+            return torch.cat([states[i] for i in self._concat], dim=1)
+        else:
+            if self.reduction:
+                states_out = torch.cat([states[i] for i in self._concat], dim=1)
+                if res1.shape[2] % 2 == 1 and res1.shape[3] % 2 == 0:
+                    preprocess_out = self.preprocess_res_xpad(res1)
+                elif res1.shape[2] % 2 == 0 and res1.shape[3] % 2 == 1:
+                    preprocess_out = self.preprocess_res_ypad(res1)
+                else:
+                    preprocess_out = self.preprocess_res(res1)
+                states_out += preprocess_out
+                return states_out
+            else:
+                # if self.layer>0:
+                states_out = torch.cat([states[i] for i in self._concat], dim=1)
+                # states_out.append(states[1])
+                states_out += res1
+                return states_out
 
 
-def _make_divisible(v, divisor, min_value=None):
-    """
-    This function is taken from the original tf repo.
-    It ensures that all layers have a channel number that is divisible by 8
-    It can be seen here:
-    https://github.com/tensorflow/models/blob/master/research/slim/nets/mobilenet/mobilenet.py
-    :param v:
-    :param divisor:
-    :param min_value:
-    :return:
-    """
-    if min_value is None:
-        min_value = divisor
-    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
-    # Make sure that round down does not go down by more than 10%.
-    if new_v < 0.9 * v:
-        new_v += divisor
-    return new_v
+class NetworkImageNet(nn.Module):
 
-
-# SiLU (Swish) activation function
-if hasattr(nn, 'SiLU'):
-    SiLU = nn.SiLU
-else:
-    # For compatibility with old PyTorch versions
-    class SiLU(nn.Module):
-        def forward(self, x):
-            return x * torch.sigmoid(x)
-
-
-class SELayer(nn.Module):
-    def __init__(self, inp, oup, reduction=4):
-        super(SELayer, self).__init__()
-        self.avg_pool = nn.AdaptiveAvgPool2d(1)
-        self.fc = nn.Sequential(
-            nn.Linear(oup, _make_divisible(inp // reduction, 8)),
-            SiLU(),
-            nn.Linear(_make_divisible(inp // reduction, 8), oup),
-            nn.Sigmoid()
+    def __init__(self, C, num_classes, layers, genotype):
+        super(NetworkImageNet, self).__init__()
+        self._layers = layers
+        self.stem0 = nn.Sequential(
+            nn.Conv2d(3, C // 2, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(C // 2),
+            nn.ReLU(),
+            nn.Conv2d(C // 2, C, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(C),
         )
 
-    def forward(self, x):
-        b, c, _, _ = x.size()
-        y = self.avg_pool(x).view(b, c)
-        y = self.fc(y).view(b, c, 1, 1)
-        return x * y
+        self.stem1 = nn.Sequential(
+            nn.ReLU(),
+            nn.Conv2d(C, C, 3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(C),
+        )
 
+        C_prev_prev, C_prev, C_curr = C, C, C
 
-def conv_3x3_bn(inp, oup, stride):
-    return nn.Sequential(
-        nn.Conv2d(inp, oup, 3, stride, 1, bias=False),
-        nn.BatchNorm2d(oup),
-        SiLU()
-    )
+        self.cells = nn.ModuleList()
+        reduction_prev = True
+        for i in range(layers):
+            if i in [layers // 3, 2 * layers // 3]:
+                C_curr *= 2
+                reduction = True
+            else:
+                reduction = False
+            cell = ImageCell(genotype, i, C_prev_prev, C_prev, C_curr, reduction, reduction_prev)
+            reduction_prev = reduction
+            self.cells += [cell]
+            C_prev_prev, C_prev = C_prev, cell.multiplier * C_curr
 
+        self.drop_path_prob = 0.2
+        self.global_pooling = nn.AvgPool2d(1)
+        self.classifier = nn.Linear(C_prev, num_classes)
+        self.dropout = nn.Dropout(0.5)
 
-def conv_1x1_bn(inp, oup):
-    return nn.Sequential(
-        nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
-        nn.BatchNorm2d(oup),
-        SiLU()
-    )
+    def forward(self, input):
+        logits_aux = None
+        s0 = self.stem0(input)
+        s1 = self.stem1(s0)
+        for i, cell in enumerate(self.cells):
+            s0, s1 = s1, cell(s0, s1, self.drop_path_prob)
 
-
-class MBConv(nn.Module):
-    def __init__(self, inp, oup, stride, expand_ratio, use_se):
-        super(MBConv, self).__init__()
-        assert stride in [1, 2]
-
-        hidden_dim = round(inp * expand_ratio)
-        self.identity = stride == 1 and inp == oup
-        if use_se:
-            self.conv = nn.Sequential(
-                # pw
-                nn.Conv2d(inp, hidden_dim, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(hidden_dim),
-                SiLU(),
-                # dw
-                nn.Conv2d(hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False),
-                nn.BatchNorm2d(hidden_dim),
-                SiLU(),
-                SELayer(inp, hidden_dim),
-                # pw-linear
-                nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup),
-            )
-        else:
-            self.conv = nn.Sequential(
-                # fused
-                nn.Conv2d(inp, hidden_dim, 3, stride, 1, bias=False),
-                nn.BatchNorm2d(hidden_dim),
-                SiLU(),
-                # pw-linear
-                nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
-                nn.BatchNorm2d(oup),
-            )
-
-    def forward(self, x):
-        if self.identity:
-            return x + self.conv(x)
-        else:
-            return self.conv(x)
-
-
-class EffNetV2(nn.Module):
-    def __init__(self, num_classes=1000, width_mult=1.):
-        super(EffNetV2, self).__init__()
-        # setting of inverted residual blocks
-        self.cfgs = [
-            # t, c, n, s, SE
-            [1, 24, 2, 1, 0],
-            [4, 48, 4, 2, 0],
-            [4, 64, 4, 2, 0],
-            [4, 128, 6, 2, 1],
-            [6, 160, 9, 1, 1],
-            [6, 272, 15, 2, 1],
-        ]
-
-        # building first layer
-        input_channel = _make_divisible(24 * width_mult, 8)
-        layers = [conv_3x3_bn(3, input_channel, 2)]
-        # building inverted residual blocks
-        block = MBConv
-        for t, c, n, s, use_se in self.cfgs:
-            output_channel = _make_divisible(c * width_mult, 8)
-            for i in range(n):
-                layers.append(block(input_channel, output_channel, s if i == 0 else 1, t, use_se))
-                input_channel = output_channel
-        self.features = nn.Sequential(*layers)
-        # building last several layers
-        output_channel = _make_divisible(1792 * width_mult, 8) if width_mult > 1.0 else 1792
-        self.conv = conv_1x1_bn(input_channel, output_channel)
-        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.classifier = nn.Linear(output_channel, num_classes)
-
-        self._initialize_weights()
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.conv(x)
-        x = self.avgpool(x)
-        x = x.view(x.size(0), -1)
-        x = self.classifier(x)
-        return x
-
-    def _initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
-                m.weight.data.normal_(0, math.sqrt(2. / n))
-                if m.bias is not None:
-                    m.bias.data.zero_()
-            elif isinstance(m, nn.BatchNorm2d):
-                m.weight.data.fill_(1)
-                m.bias.data.zero_()
-            elif isinstance(m, nn.Linear):
-                m.weight.data.normal_(0, 0.001)
-                m.bias.data.zero_()
+        out = self.global_pooling(s1)
+        logits = self.classifier(out.view(out.size(0), -1))
+        return logits
